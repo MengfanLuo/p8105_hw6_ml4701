@@ -10,8 +10,6 @@ library(tidyverse)
 library(corrplot)
 library(modelr)
 library(mgcv)
-#library(p8105.datasets)
-#library(leaflet)
 
 knitr::opts_chunk$set(
   fig.width = 6,
@@ -73,6 +71,8 @@ Model was fitted and we can see p values for all estimates of the coeficients ar
 ```{r}
 fit = lm(bwt ~ bhead + blength+ gaweeks+ delwt+ babysex, data = birthweight_df)
 
+summary(fit)
+
 fit %>% 
   broom::tidy() %>% 
   mutate(term = str_replace(term,"babysex","sex_")) %>% 
@@ -83,7 +83,7 @@ birthweight_df %>%
   modelr::add_predictions(fit) %>% 
   modelr::add_residuals(fit) %>% 
   ggplot(aes(x = pred, y = resid))+
-  geom_point()+
+  geom_point(alpha = .3)+
   labs(
     title = "Model residuals against fitted values",
     x = "Fitted values", 
@@ -102,17 +102,17 @@ We define:
 
 `model 1: bwt ~ blength + gaweeks`,
 
-`model 2: bwt ~ bhead + blength+ babysex + bhead*blength + bhead* babysex +\n blength* babysex + bhead * blength * babysex`
+`model 2: bwt ~ bhead + blength + babysex + bhead * blength + bhead * babysex + blength * babysex + bhead * blength * babysex`
 
 And the previous model as 
 
-`model 0: bwt ~ bhead + blength+ gaweeks+ delwt+ babysex`
+`model 0: bwt ~ bhead + blength + gaweeks + delwt + babysex`
 
 100 pairs of cross-validation sets were generated. RMSE for each test set were calculated and reflected in the boxplots for each model.
 
 
 ```{r}
-set.seed(1)
+set.seed(1234)
 
 cv_df = crossv_mc(birthweight_df,100)
 
@@ -157,14 +157,96 @@ cv_df %>%
 
 ```
 
-From the table summary of rmse of each model and the boxplot, we can see `model 0` has the smallest average RMSE of `282.5508`, while `model 2` is similar but a bit larger. `model 3` has the largest RMSE as `332.2287`. This shows that `model 1` has the best prediction on `bwt`.
+From the table summary of rmse of each model and the boxplot, we can see `model 0` has the smallest average RMSE of `283.2253`, while `model 2` is similar but a bit larger. `model 1` has the largest RMSE as `335.4731`. This shows that `model 0` has the best prediction on `bwt`.
 
 
+## Problem 2
+
+Load weather data
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
+5000 bootstrap were created for models `lm(tmax ~ tmin)` . For each bootstrap sample, estimates of $\hat{r}^2$ and $log(\hat{\beta}_0*\hat{\beta}_1)$ are calculated.   
+
+```{r}
+set.seed(1234)
+nested_bootstrap = weather_df %>% 
+  modelr::bootstrap(n = 5000)%>% 
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::tidy),
+    glance = map(models, broom::glance)) %>% 
+  select(-strap, -models) 
+
+logb0b1_5000 = nested_bootstrap %>% 
+  unnest(results) %>% 
+  group_by(.id) %>% 
+  summarize(
+    logb0b1 = log(prod(estimate)))
+
+r.squared_5000 = nested_bootstrap %>% 
+  unnest(glance) %>% 
+  group_by(.id) %>% 
+  summarize(
+    r.squared = r.squared)
+
+left_join(logb0b1_5000,r.squared_5000) 
+```
+
+The following plot shows distributions of estimates of $\hat{r}^2$ and $log(\hat{\beta}_0*\hat{\beta}_1)$. We can see both estimates follow distributions close to narmol, with mean value around 0.91 and 2.01, respectively.
 
 
+```{r}
+logb0b1_5000 %>% 
+  ggplot(aes(x = logb0b1))+
+  geom_density()+
+  labs(
+    title = "Distribution of estimates of log(b0*b1)",
+    x = "log(b0*b1)"
+  )
+
+r.squared_5000 %>% 
+  ggplot(aes(x = r.squared))+
+  geom_density()+
+  labs(
+    title = "Distribution of estimates of R-square", 
+  ) 
+```
 
 
+```{r}
+logb0b1_5000 %>% 
+  summarize(
+    ci_lower = quantile(logb0b1, 0.025), 
+    ci_upper = quantile(logb0b1, 0.975))
 
+
+r.squared_5000 %>% 
+  summarize(
+    ci_lower = quantile(r.squared, 0.025), 
+    ci_upper = quantile(r.squared, 0.975))
+
+```
+
+
+The 2.5% and 97.5% quantiles were calculated using the 5000 bootstrap estimates, and the 95% confidence interval for the two quantities are:
+
+95% CI for $\hat{r}^2$: [0.894, 0.928]
+
+
+95% CI for $log(\hat{\beta}_0*\hat{\beta}_1)$: [1.97, 2.06]
 
 
 
